@@ -1,20 +1,58 @@
 #!/bin/bash
+
+# =========================================
+# User Data Script - Backend Instance
+# =========================================
+
+# Variables from Terraform
+DATADOG_API_KEY="${datadog_api_key}"
+DATADOG_SITE="${datadog_site}"
+ENVIRONMENT="${environment_name}"
+ENABLE_LOGS="${enable_datadog_logs}"
+
+# Log de inicio
+echo "$(date): Iniciando configuración del backend - ${timestamp}" >> /var/log/user-data.log
+
+# Actualizar sistema
 yum update -y
-sudo yum install -y docker
 
-# Iniciar el servicio de Docker
-sudo service docker start
+# Instalar dependencias básicas
+yum install -y curl wget unzip
 
-# Descargar y descomprimir el archivo backend.zip desde S3
-aws s3 cp s3://ai4devs-project-code-bucket/backend.zip /home/ec2-user/backend.zip
-unzip /home/ec2-user/backend.zip -d /home/ec2-user/
+# Instalar Datadog Agent
+DD_API_KEY=$DATADOG_API_KEY DD_SITE=$DATADOG_SITE bash -c "$(curl -L https://s3.amazonaws.com/dd-agent/scripts/install_script.sh)"
 
-# Construir la imagen Docker para el backend
-cd /home/ec2-user/backend
-sudo docker build -t lti-backend .
+# Configurar tags del agente
+cat > /etc/datadog-agent/conf.d/tags.yaml << EOF
+tags:
+  - env:$ENVIRONMENT
+  - service:lti-backend
+  - project:lti
+  - instance_type:backend
+EOF
 
-# Ejecutar el contenedor Docker
-sudo docker run -d -p 8080:8080 lti-backend
+# Configurar logs si está habilitado
+if [ "$ENABLE_LOGS" = "true" ]; then
+    cat > /etc/datadog-agent/conf.d/logs.yaml << EOF
+logs_enabled: true
+logs:
+  - type: file
+    path: /var/log/messages
+    service: lti-backend
+    source: system
+  - type: file
+    path: /var/log/user-data.log
+    service: lti-backend
+    source: user-data
+EOF
+fi
 
-# Timestamp to force update
-echo "Timestamp: ${timestamp}"
+# Reiniciar agente Datadog
+systemctl restart datadog-agent
+systemctl enable datadog-agent
+
+# Configurar aplicación básica (simulada)
+mkdir -p /opt/lti-backend
+echo "Backend LTI Application - Started at $(date)" > /opt/lti-backend/app.log
+
+echo "$(date): Configuración del backend completada" >> /var/log/user-data.log 
